@@ -21,6 +21,8 @@ import {
       [attr.opacity]="circleOpacity"
       [attr.class]="classNames"
       [attr.pointer-events]="pointerEvents"
+      [attr.data-series]="series"
+      [attr.data-index]="index.toString()"
     />
   `,
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -32,9 +34,12 @@ export class CircleComponent implements OnChanges {
   @Input() fill;
   @Input() stroke;
   @Input() data;
+  @Input() series;
   @Input() classNames;
   @Input() circleOpacity;
   @Input() pointerEvents;
+  @Input() uid: string;
+  @Input() index: number;
 
   @Output() select = new EventEmitter();
   @Output() activate = new EventEmitter();
@@ -57,6 +62,6 @@ export class CircleComponent implements OnChanges {
 
   ngOnChanges(changes: SimpleChanges): void {
     this.classNames = Array.isArray(this.classNames) ? this.classNames.join(' ') : '';
-    this.classNames += 'circle';
+    this.classNames += 'circle' + ' draggable-' + this.uid;
   }
 }

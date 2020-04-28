@@ -44,9 +44,12 @@ import { ColorHelper } from '../common/color.helper';
         [r]="circle.radius"
         [fill]="circle.color"
         [class.active]="isActive({ name: circle.seriesName })"
-        [pointerEvents]="circle.value === 0 ? 'none' : 'all'"
+        [pointerEvents]= "'all'"
         [data]="circle.value"
+        [series]="circle.seriesName"
+        [index]="circle.index"
         [classNames]="circle.classNames"
+        [uid]="uid"
         (select)="onClick(circle.data)"
         (activate)="activateCircle()"
         (deactivate)="deactivateCircle()"
@@ -83,6 +86,7 @@ export class CircleSeriesComponent implements OnChanges, OnInit {
   @Input() activeEntries: any[];
   @Input() tooltipDisabled: boolean = false;
   @Input() tooltipTemplate: TemplateRef<any>;
+  @Input() uid: string;
 
   @Output() select = new EventEmitter();
   @Output() activate = new EventEmitter();
@@ -161,6 +165,7 @@ export class CircleSeriesComponent implements OnChanges, OnInit {
 
     return {
       classNames: [`circle-data-${i}`],
+      index:i,
       value,
       label,
       data,

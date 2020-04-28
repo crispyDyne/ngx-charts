@@ -7,10 +7,11 @@ import {
   HostListener,
   ChangeDetectionStrategy,
   ContentChild,
-  TemplateRef
+  TemplateRef,
+  AfterViewInit
 } from '@angular/core';
 import { trigger, style, animate, transition } from '@angular/animations';
-import { scaleLinear, scaleTime, scalePoint } from 'd3-scale';
+import { scaleLinear, scaleTime, scalePoint, scaleLog } from 'd3-scale';
 import { curveLinear } from 'd3-shape';
 
 import { calculateViewDimensions, ViewDimensions } from '../common/view-dimensions.helper';
@@ -18,6 +19,8 @@ import { ColorHelper } from '../common/color.helper';
 import { BaseChartComponent } from '../common/base-chart.component';
 import { id } from '../utils/id';
 import { getUniqueXDomainValues, getScaleType } from '../common/domain.helper';
+
+import interact from 'interactjs';
 
 @Component({
   selector: 'ngx-charts-line-chart',
@@ -74,7 +77,7 @@ import { getUniqueXDomainValues, getScaleType } from '../common/domain.helper';
           [showRefLabels]="showRefLabels"
           (dimensionsChanged)="updateYAxisWidth($event)"
         ></svg:g>
-        <svg:g [attr.clip-path]="clipPath">
+        <svg:g [attr.clip-path]="clipPath" [id]="'chartArea'+uid">
           <svg:g *ngFor="let series of results; trackBy: trackBy" [@animationState]="'active'">
             <svg:g
               ngx-charts-line-series
@@ -117,6 +120,7 @@ import { getUniqueXDomainValues, getScaleType } from '../common/domain.helper';
                 [activeEntries]="activeEntries"
                 [tooltipDisabled]="tooltipDisabled"
                 [tooltipTemplate]="tooltipTemplate"
+                [uid]="uid"
                 (select)="onClick($event)"
                 (activate)="onActivate($event)"
                 (deactivate)="onDeactivate($event)"
@@ -209,7 +213,12 @@ export class LineChartComponent extends BaseChartComponent {
   @Input() xScaleMax: any;
   @Input() yScaleMin: number;
   @Input() yScaleMax: number;
+  
+  @Input() activateDrag: boolean = false;
+  @Input() uid: string = 'draggable';
+  @Input() draggable: any;
 
+  @Output() resultsChange: EventEmitter<any> = new EventEmitter();
   @Output() activate: EventEmitter<any> = new EventEmitter();
   @Output() deactivate: EventEmitter<any> = new EventEmitter();
 
@@ -244,6 +253,135 @@ export class LineChartComponent extends BaseChartComponent {
   timelineXDomain: any;
   timelineTransform: any;
   timelinePadding: number = 10;
+
+  interact
+  updateTimeout;
+  lastUpdate = new Date().getTime();
+
+  initial() {
+
+    const xmin = this.xScale(this.draggable.x.min)
+    const xmax = this.xScale(this.draggable.x.max)
+    const x1 = this.xScale(new Date(this.draggable.x.min.getTime() + this.draggable.x.step))
+    const xStep = Math.abs(x1 - xmin)
+
+    const ymin = this.yScale(this.draggable.y.min)
+    const ymax = this.yScale(this.draggable.y.max)
+    const y1 = this.yScale(this.draggable.y.min + this.draggable.y.step)
+    const yStep = Math.abs(y1 - ymin)
+
+    if(this.activateDrag) {
+      const elementRect = this.chartElement.nativeElement.getBoundingClientRect()
+      // target elements with the "draggable-uid" class
+      this.interact =  interact('.draggable-' + this.uid).draggable({
+        modifiers: [
+          // snap the element to a grid
+          interact.modifiers.snap({
+            targets: [interact.createSnapGrid({
+               x: xStep, 
+               y: yStep, 
+               offset:{
+                 x: elementRect.left + this.dims.xOffset + xmin,
+                 y: elementRect.top + this.margin[0] + ymax},
+               limits: {
+                 top: elementRect.top + this.margin[0] + ymax,
+                 bottom: elementRect.top + this.margin[0] + ymin,
+                 left: elementRect.left + this.dims.xOffset + xmin,
+                 right: elementRect.left + this.dims.xOffset + xmax
+               },
+              })],
+            range: Infinity,
+            relativePoints: [{ x: 0.5, y: 0.5 }],
+          }),
+        ],
+        listeners: {
+          // call this function on every dragmove event
+          move: event => this.drag(event)
+        }
+      });
+    }
+  }
+
+  drag(event) {
+    var target = event.target;
+
+    // What data point needs to be moved
+    const seriesName = target.getAttribute('data-series');
+    const dataIndex = parseInt(target.getAttribute('data-index'));
+
+    const currentSeries = this.results.find(series => series.name === seriesName); // which series
+    const currentData = currentSeries.series[dataIndex]; //which point
+
+    const x = this.xScale.invert(this.xScale(currentData.name) + event.dx)
+    const y = this.yScale.invert(this.yScale(currentData.value) + event.dy)
+    currentData.name = x; // update
+    currentData.value = y; // update
+
+    
+    currentSeries.series.slice(dataIndex,-1).forEach((element,index,array) => {
+      if (array[index+1]) {
+        if ((array[index+1].name - array[index].name)<(24*60*60*1000)) {
+          if (array[index].name<this.draggable.x.max) {
+            array[index+1].name = incrementDay(array[index].name)
+          } else {
+            array[index].name = decrementDay(array[index+1].name)
+          }
+        }
+      }
+    });
+
+    currentSeries.series.slice(1,dataIndex+1).reverse().forEach((element,index,array) => {
+      if (array[index+1]) {
+        if ((array[index].name - array[index+1].name)<(24*60*60*1000)) {
+          if (array[index].name>this.draggable.x.min) {
+            array[index+1].name = decrementDay(array[index].name)
+          } else {
+            array[index].name = incrementDay(array[index+1].name)
+          }
+        }
+      }
+    })
+  
+    currentSeries.series.slice(1,-1).forEach((element,index,array) => {
+      if (array[index+1]) {
+        if ((array[index+1].name - array[index].name)<(24*60*60*1000)) {
+          if (array[index].name<this.draggable.x.max) {
+            array[index+1].name = incrementDay(array[index].name)
+          } else {
+            array[index].name = decrementDay(array[index+1].name)
+          }
+        }
+      }
+    });
+
+    currentSeries.series.slice(1,-1).reverse().forEach((element,index,array) => {
+      if (array[index+1]) {
+        if ((array[index].name - array[index+1].name)<(24*60*60*1000)) {
+          if (array[index].name>this.draggable.x.min) {
+            array[index+1].name = decrementDay(array[index].name)
+          } else {
+            array[index].name = incrementDay(array[index+1].name)
+          }
+        }
+      }
+    })
+    
+    
+    // update
+    const now = new Date().getTime();
+    clearTimeout(this.updateTimeout);
+    if (now - this.lastUpdate > 20) {
+      // if last update was more than 20ms ago
+      this.update(); // update immediately
+      this.resultsChange.emit([...this.results])
+    } else {
+      // otherwise
+      this.updateTimeout = setTimeout(() => {
+        this.update()
+        this.resultsChange.emit([...this.results])
+      }, 20); // wait 20ms before updating
+    }
+  }
 
   update(): void {
     super.update();
@@ -287,6 +425,8 @@ export class LineChartComponent extends BaseChartComponent {
 
     this.clipPathId = 'clip' + id().toString();
     this.clipPath = `url(#${this.clipPathId})`;
+
+    this.initial()
   }
 
   updateTimeline(): void {
@@ -312,9 +452,9 @@ export class LineChartComponent extends BaseChartComponent {
     let min;
     let max;
     if (this.scaleType === 'time' || this.scaleType === 'linear') {
-      min = this.xScaleMin ? this.xScaleMin : Math.min(...values);
+      min = (typeof this.xScaleMin) !== 'undefined' ? this.xScaleMin : Math.min(...values);
 
-      max = this.xScaleMax ? this.xScaleMax : Math.max(...values);
+      max = (typeof this.xScaleMax) !== 'undefined' ? this.xScaleMax : Math.max(...values);
     }
 
     if (this.scaleType === 'time') {
@@ -365,9 +505,9 @@ export class LineChartComponent extends BaseChartComponent {
       values.push(0);
     }
 
-    const min = this.yScaleMin ? this.yScaleMin : Math.min(...values);
+    const min = (typeof this.yScaleMin) !== 'undefined' ? this.yScaleMin : Math.min(...values);
 
-    const max = this.yScaleMax ? this.yScaleMax : Math.max(...values);
+    const max = (typeof this.yScaleMax) !== 'undefined' ? this.yScaleMax : Math.max(...values);
 
     return [min, max];
   }
@@ -396,6 +536,8 @@ export class LineChartComponent extends BaseChartComponent {
 
   getYScale(domain, height): any {
     const scale = scaleLinear().range([height, 0]).domain(domain);
+    // const scale = scaleLog().range([height, 0]).domain(domain);
+    
 
     return this.roundDomains ? scale.nice() : scale;
   }
@@ -497,4 +639,34 @@ export class LineChartComponent extends BaseChartComponent {
     }
     this.activeEntries = [];
   }
+
+}
+
+function roundStep(value,step){
+  return Math.round(value/step)*step
+}
+
+function minDate(date1,date2)  {return date1<date2 ? date1 : date2}
+function maxDate(date1,date2) {return date1>date2 ? date1 : date2}
+function roundDateDays(date: Date) {
+  const cleanDate = new Date(date)
+  cleanDate.setHours(0);
+  cleanDate.setMinutes(0);
+  cleanDate.setSeconds(0);
+  cleanDate.setMilliseconds(0);
+  if (date.getHours()<12) {
+    return cleanDate
+  } else {
+    return incrementDay(cleanDate)
+  }
+}
+
+function incrementDay(date) {
+  const outDate = new Date(date)
+  return new Date(outDate.setDate(outDate.getDate()+1))
+}
+
+function decrementDay(date) {
+  const outDate = new Date(date)
+  return new Date(outDate.setDate(outDate.getDate()-1))
 }
